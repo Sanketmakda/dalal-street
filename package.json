@@ -1,8 +1,13 @@
+
 {
   "name": "dalal-street-friend-test",
   "version": "0.1.0",
   "private": true,
   "description": "Private friend-test build of Dalal Street with room codes and host-authoritative state relay",
-  "scripts": { "start": "node server.js" },
-  "engines": { "node": ">=20" }
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
 }
