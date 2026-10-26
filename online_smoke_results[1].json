@@ -1,0 +1,26 @@
+{
+  "startupError": null,
+  "domNodes": 872,
+  "ids": 88,
+  "onlinePanel": true,
+  "roomCodeField": true,
+  "checks": [
+    {
+      "name": "remote BUY is applied to the authenticated player seat",
+      "ok": true
+    },
+    {
+      "name": "remote lock only locks that player and transitions when everyone locks",
+      "ok": true
+    },
+    {
+      "name": "remote IPO bid reserves cash and records shares",
+      "ok": true
+    },
+    {
+      "name": "non-host UI disables host-only round controls",
+      "ok": true
+    }
+  ],
+  "failedChecks": []
+}

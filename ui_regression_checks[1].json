@@ -1,0 +1,15 @@
+{
+  "checks": {
+    "base_v34_css_preserved": true,
+    "no_duplicate_static_html_ids": true,
+    "mobile_online_layout_present": true,
+    "reduced_motion_rule_present": true,
+    "accessible_live_status_present": true,
+    "room_code_normalization_present": true,
+    "enter_to_join_present": true,
+    "loading_state_prevents_double_submit": true
+  },
+  "passed": 8,
+  "total": 8,
+  "preexisting_template_id_note": "The old engine contains two literal occurrences of id=ipoQty because one is inside an IPO HTML template and one is inside a test assertion string; only one IPO input is created in the rendered DOM."
+}

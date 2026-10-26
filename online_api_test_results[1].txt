@@ -1,0 +1,16 @@
+PASS health endpoint
+PASS room creation returns host session and six-character code
+PASS duplicate names get a unique safe display name
+PASS host can publish authoritative state
+PASS friend receives current snapshot with only their private cards
+PASS non-host cannot publish state
+PASS player action is queued and server pins authenticated player id
+PASS host receives queued action attributed to authenticated friend
+PASS non-host cannot issue host-only commands
+PASS late join rejected after game starts
+PASS invalid room token rejected
+PASS room enforces maximum of 10 players
+{
+  "ok": true,
+  "passed": 12
+}

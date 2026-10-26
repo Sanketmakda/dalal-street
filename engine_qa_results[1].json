@@ -1,0 +1,191 @@
+{
+  "startupError": null,
+  "domNodes": 904,
+  "baseIds": 75,
+  "sell": {
+    "passed": 39,
+    "total": 39,
+    "failures": []
+  },
+  "corporate": {
+    "passed": 105,
+    "total": 105,
+    "failures": []
+  },
+  "botRegression": {
+    "games": 300,
+    "failed": 0,
+    "first": null,
+    "totalSubRounds": 6600,
+    "bonus": 300,
+    "metrics": {
+      "spreadTriggered": 284,
+      "panicTriggered": 201,
+      "bigMovesTriggered": 300,
+      "spreadMin": 2100,
+      "spreadMax": 1638595
+    }
+  },
+  "audit": [
+    {
+      "ok": true,
+      "label": "Available and frozen cash never negative",
+      "detail": "Cash and IPO escrow are finite and non-negative."
+    },
+    {
+      "ok": true,
+      "label": "IPO escrow matches all pending bids",
+      "detail": "Every reserved rupee maps to an unallocated IPO bid."
+    },
+    {
+      "ok": true,
+      "label": "IPO bids obey 200–500 whole-share minimum/maximum and holding cap",
+      "detail": "Every pending IPO bid is a whole-share quantity from 200 to 500 and fits the remaining company holding cap."
+    },
+    {
+      "ok": true,
+      "label": "IPO active-window pointer matches phase",
+      "detail": "Exactly one active IPO window is referenced during bidding; no stale pointer remains after settlement."
+    },
+    {
+      "ok": true,
+      "label": "Company and IPO count limits",
+      "detail": "The game has 8–10 companies and no more than two IPO companies."
+    },
+    {
+      "ok": true,
+      "label": "Portfolio arithmetic includes IPO escrow",
+      "detail": "Available cash + frozen IPO funds + holdings value is consistent."
+    },
+    {
+      "ok": true,
+      "label": "Holdings matrix matches player state",
+      "detail": "Every player has one non-negative integer quantity per stock."
+    },
+    {
+      "ok": true,
+      "label": "All player/company state arrays match company count",
+      "detail": "Holdings, average cost, special state, IPO bids, lots and overflow flags have matching lengths."
+    },
+    {
+      "ok": true,
+      "label": "Holding lots reconcile to total holdings",
+      "detail": "Every held share is tracked to a positive whole-share lot with a valid acquisition Sub-Round."
+    },
+    {
+      "ok": true,
+      "label": "Company supply invariant = 10,000",
+      "detail": "For every company, player holdings + available shares + treasury shares equals 10,000."
+    },
+    {
+      "ok": true,
+      "label": "Normal holding cap and event exceptions",
+      "detail": "Only explicitly flagged corporate-action holdings exceed 2,500."
+    },
+    {
+      "ok": true,
+      "label": "IPO allocation respects 2,500-share cap",
+      "detail": "IPO allocations obey the 2,500 cap; explicitly flagged later corporate-action shares may exceed it."
+    },
+    {
+      "ok": true,
+      "label": "Action count / distinct-company rule",
+      "detail": "No player repeats a company or exceeds the action limit."
+    },
+    {
+      "ok": true,
+      "label": "Pending action shape and quantity fields",
+      "detail": "All pending actions have a valid type, company index and share quantity."
+    },
+    {
+      "ok": true,
+      "label": "Locked decision batches are fully validated before resolution",
+      "detail": "Every committed batch has valid company references, exact order prices, legal BUY/SELL/SKIP quantities, holding-cap compliance and sufficient available cash."
+    },
+    {
+      "ok": true,
+      "label": "R1 Sub-Round 1 compulsory-buy lock gate",
+      "detail": "Every locked/committed R1 SR1 player has 2–5 valid BUYs in distinct tradable companies."
+    },
+    {
+      "ok": true,
+      "label": "History has valid sub-round identity",
+      "detail": "Every history entry stores round/sub-round and a full price/supply/portfolio snapshot."
+    },
+    {
+      "ok": true,
+      "label": "History preserves each Sub-Round opening price baseline",
+      "detail": "Every immutable history record includes the opening price of every company for circuit auditing."
+    },
+    {
+      "ok": true,
+      "label": "Total Sub-Round price movement respects ±5% circuits",
+      "detail": "All non-corporate-adjustment closing prices remain inside the opening-price ±5% band, including event reactions."
+    },
+    {
+      "ok": true,
+      "label": "Immutable history snapshots reconcile supply",
+      "detail": "Every historical company snapshot reconciles holdings + available + treasury to 10,000."
+    },
+    {
+      "ok": true,
+      "label": "VITO restoration matches immutable Sub-Round history",
+      "detail": "Every history record with a VITO restoration stores the restored price and matching round identity."
+    },
+    {
+      "ok": true,
+      "label": "Decision intel includes listed zero-price stocks but excludes unlisted IPOs",
+      "detail": "Listed companies remain eligible for private card pressure at ₹0 and during VITO trading halts; unlisted IPOs are excluded."
+    },
+    {
+      "ok": true,
+      "label": "Market indices (NIFTY/SENSEX/BANK NIFTY/USD-INR/VIX) valid",
+      "detail": "All five game-brain market indices are finite."
+    },
+    {
+      "ok": true,
+      "label": "Price range ₹0–₹10,000",
+      "detail": "All prices remain in the defined range."
+    },
+    {
+      "ok": true,
+      "label": "One VITO flag per player/game",
+      "detail": "VITO usage is tracked per player, not per company."
+    },
+    {
+      "ok": true,
+      "label": "Trade journal matches actual fills and SELL limits",
+      "detail": "Every journal row records a valid executed fill, exact cash delta, and SELL quantity within the eligible-share cap."
+    },
+    {
+      "ok": true,
+      "label": "Cash ledger reconciles to trade and event journals",
+      "detail": "Ledger baseline is not active in this pre-game fixture; live reconciliation activates at game start."
+    },
+    {
+      "ok": true,
+      "label": "Share ledger reconciles to trade, corporate-event and IPO journals",
+      "detail": "Ledger baseline is not active in this pre-game fixture; live reconciliation activates at game start."
+    },
+    {
+      "ok": true,
+      "label": "Pending BUY orders are valid, affordable 200–500 share orders",
+      "detail": "Every queued BUY is tradable, within the normal holding cap and affordable from available cash."
+    },
+    {
+      "ok": true,
+      "label": "Pending SELL orders obey maturity, minimum and 50% cap",
+      "detail": "Every queued SELL is mature, at least 200 shares, and within the allowed eligible-share cap."
+    },
+    {
+      "ok": true,
+      "label": "Event journal attribution, IPO settlement and VITO rollback linkage",
+      "detail": "Event deltas name the affected player, IPO reservation = spent + refunded, and VITO reversals link to the correct bankruptcy ID."
+    },
+    {
+      "ok": true,
+      "label": "Quit players remain frozen",
+      "detail": "Active players are not frozen and every inactive player retains frozen portfolio state."
+    }
+  ]
+}
