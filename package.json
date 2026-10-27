@@ -6,8 +6,13 @@
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js && node tests/check_syntax.js",
-    "test": "node --test --test-concurrency=1 tests/*.test.js"
+    "test": "node --test --test-concurrency=1 tests/*.test.js",
+    "smoke:live": "node tests/live_smoke.js"
   },
-  "engines": { "node": ">=20" },
-  "devDependencies": { "playwright": "^1.48.0" }
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
 }

@@ -24,7 +24,7 @@ function personalizedState(room, member){
   if(member.host) return state;
   const me=member.id, hideDecisions=['DECISION','REVIEW'].includes(state.phase), hideBids=state.phase==='IPO_BID';
   for(const k of ['cardPool','cardDiscard','seed','rngN','rng','ledgerBaseline']) delete state[k];   // undealt cards + RNG state would let a guest infer/predict other hands
-  if(Array.isArray(state.currentIntel)) state.currentIntel=state.currentIntel.filter(x=>x&&x.player===me);
+  if('currentIntel' in state) state.currentIntel=Array.isArray(state.currentIntel)?state.currentIntel.filter(x=>x&&x.player===me):[];   // fail closed on any unexpected shape
   if(Array.isArray(state.history)) state.history.forEach(h=>{ if(h) delete h.seed; });
   if(Array.isArray(state.players)) for(const p of state.players){
     if(p.id===me) continue;

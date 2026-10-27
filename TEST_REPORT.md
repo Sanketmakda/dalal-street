@@ -6,7 +6,7 @@ Commands run (all executed on the exact files being committed):
 |---|---|
 | `node --check server.js` | PASS |
 | `node tests/check_syntax.js` (both inline scripts of `index.html`) | PASS |
-| `node --test --test-concurrency=1 tests/*.test.js` (= `npm test`) | **PASS – 53 / 53, 0 failed** (~100 s) |
+| `node --test --test-concurrency=1 tests/*.test.js` (= `npm test`) | **PASS – 54 / 54, 0 failed** (~100 s) |
 
 Every test drives the real `index.html` + `server.js`; multiplayer tests use two separate browser contexts (host "Alice", guest "Bob"). Each test also asserts no uncaught page errors / console errors / failed requests where a page is used.
 
@@ -23,3 +23,9 @@ Every test drives the real `index.html` + `server.js`; multiplayer tests use two
 * The ₹3,15,000 / ₹10,33,500 / 4,800-share figures in your screenshot cannot be independently reconstructed (no trade log). The same arithmetic is verified for every state the engine can reach in the tests above, but those specific numbers are **not** confirmed.
 * Corporate-action cost basis was tested independently for **split** only; free/paid bonus avg-price handling is covered by the engine's built-in suite and the per-settlement ledger checks, not by a dedicated cost-basis assertion.
 * The host's browser holds all hands (architecture); no test can or does claim otherwise.
+
+
+## Round 2 follow-up (verification session)
+* Re-ran `npm test` on `85c3178`: 53/53 PASS. Added 1 test (server fails closed on a malformed `currentIntel`; fails on `85c3178`'s server, passes now) → **54/54 PASS**.
+* `server.js personalizedState`: a non-array `currentIntel` was forwarded unfiltered to guests. The engine always writes an array, so this was not reachable in normal play, but the filter now fails closed.
+* New `tests/live_smoke.js <url>` (HTTP-only post-deploy smoke: page, HEAD, health, create/join, permissions, guest payload privacy, 404). Executed against a local server: ALL PASSED. **Not executed against the Render URL** — this session's network allowlist blocks onrender.com.

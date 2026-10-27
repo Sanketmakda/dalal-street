@@ -141,3 +141,13 @@ test('before resolution Bob\'s History/Revealed Intel contain no hidden cards; a
   assert.deepEqual(alice.page.errors, []); assert.deepEqual(bob.page.errors, []);
   await alice.ctx.close(); await bob.ctx.close();
 });
+
+test('server fails closed: a malformed currentIntel is never forwarded to a guest', async () => {
+  const http = require('node:http');
+  const call = (method, path, body) => new Promise((res, rej) => { const u = new URL(server.url + path); const r = http.request({ method, hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { 'content-type': 'application/json' } }, x => { let b = ''; x.on('data', c => b += c); x.on('end', () => res({ status: x.statusCode, text: b, json: (() => { try { return JSON.parse(b); } catch { return null; } })() })); }); r.on('error', rej); if (body) r.write(JSON.stringify(body)); r.end(); });
+  const room = (await call('POST', '/api/rooms', { name: 'H' })).json, guest = (await call('POST', `/api/rooms/${room.code}/join`, { name: 'G' })).json;
+  const secret = 'LEAK-CHECK-' + Date.now();
+  await call('POST', `/api/rooms/${room.code}/state?token=${room.token}`, { state: { started: true, players: [{ id: 0, privateCards: [{ cardId: secret }] }, { id: 1 }], currentIntel: { 0: [secret] } } });
+  const poll = await call('GET', `/api/rooms/${room.code}/poll?token=${guest.token}&since=0`);
+  assert.equal(poll.status, 200); assert.ok(!poll.text.includes(secret));
+});
