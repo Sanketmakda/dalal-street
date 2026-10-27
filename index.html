@@ -97,6 +97,7 @@ body.online-friend-test [data-page="qa"]{display:none!important;}
     <div class="tick"><b>MARKET</b><span class="flat">DEMO REFERENCE · NOT LIVE</span></div>
   </div>
   <div class="news"><div class="track"><span>DEMO REFERENCE ONLY · ticker values are not a live feed</span><span>Game prices and events are fictional and never copied from external markets</span><span>Use the ticker as context, not as a trading rule</span></div></div>
+  <div id="simIndices" class="tiny" style="padding:6px 14px" aria-live="polite"></div>
 </header>
 
 <main>
@@ -164,7 +165,7 @@ body.online-friend-test [data-page="qa"]{display:none!important;}
     <div class="section">Game Market Watch <span class="tiny">fictional prices</span></div>
     <div id="stocks" class="stockGrid"></div>
   </div>
-  <div class="card" style="margin-bottom:12px"><div class="section">Private Intel <span class="tiny">only you see these clues until reveal</span></div><div id="intelHand" class="chips"></div></div>
+  <div class="card" style="margin-bottom:12px"><div class="section">Private Intel <span class="tiny">only you see these clues until reveal</span> <button id="intelHelp" class="btn ghost" type="button" aria-haspopup="dialog" style="margin-left:8px;padding:4px 10px">? How to read Private Intel</button></div><div id="intelHand" class="chips"></div></div>
 
   <div class="detail">
     <div class="card">
@@ -276,6 +277,18 @@ const STOCKS=[
   {name:'TCS',price:230,beta:.90,sector:'IT'}
 ];
 const START=STOCKS.map(s=>s.price);
+// ---- Market/Intel formula constants. The help text and the engine both read these, so docs cannot drift. ----
+const CARD_SIGNALS={company:[40,30,15,-15,-30,-40],market:[-30,-15,15,30]};
+const CONFIDENCE_WEIGHT={Low:.5,Medium:1,High:1.5};
+const INTEL_PRESSURE_CAP=60,INTEL_PRESSURE_DIVISOR=1000; // company pressure/1000 = fractional return added to the raw move
+const MARKET_CARD_GAIN={nifty:.03,sensex:.03,bankNifty:.04,usdInr:.025,vix:.05}; // index-percent points per unit of average market-card signal
+// Weights of the three equity indices inside a company's market influence (each row sums to 1.00).
+const INDEX_MIX={default:{nifty:.35,sensex:.25,bankNifty:.40},Banking:{nifty:.20,sensex:.15,bankNifty:.65}};
+// USD/INR sensitivity by exact sector name (was a substring test that mis-tagged "Capital Goods" as IT).
+const FX_BETA_BY_SECTOR={'IT':.45,'Energy/Consumer':-.35,'Auto':-.2},FX_BETA_DEFAULT=.05;
+const VIX_FLOOR=15,VIX_DIVISOR=1000,CIRCUIT_BAND=.05;
+function indexMixFor(sector){return INDEX_MIX[sector]||INDEX_MIX.default;}
+function fxBetaFor(sector){return Object.prototype.hasOwnProperty.call(FX_BETA_BY_SECTOR,sector)?FX_BETA_BY_SECTOR[sector]:FX_BETA_DEFAULT;}
 const RISK_EVENTS=['DIVIDEND','BUYBACK','BONUS_FREE','BONUS_PAID','SPLIT','RESULT','COMPANY_NEWS','MARKET_NEWS','BANKRUPTCY'];
 const HOW=[
  {t:'1. Lobby',d:'The Admin configures the room before the game starts.',b:['2–10 seats. This local QA build runs one human/Admin plus configurable bots; real multiplayer is not implemented.','Every player receives exactly ₹10,00,000.','Every player starts with exactly 0 shares.','Admin selects the decision timer before START GAME.','Admin selects 0, 1 or 2 IPO slots.','Network login, joining and invites are not implemented here; the production server must reject late joins after START GAME.']},
@@ -293,6 +306,66 @@ const HOW=[
  {t:'13. Finish & ranking',d:'Final value is always calculated from the same state source.',b:['Final portfolio = available cash + frozen IPO funds + current market value of all holdings.','No hidden starting shares or hidden cash.','Final standings use active and quit portfolios alike.','The final history snapshot remains available for audit.']},
  {t:'14. Why the bot test exists',d:'Before real multiplayer, we stress the rule engine.',b:['Bots deliberately generate different order patterns.','Every round runs through the same validation and resolution path.','QA checks cash non-negative, portfolio arithmetic, matrix consistency, supply ≤10,000, holding rules, action counts and legal round transitions.','100-game stress testing is included to expose edge cases.']}
 ];
+
+// ---------------- Help text derived from the SAME constants the engine uses ----------------
+const pts=n=>(n>=0?'+':'')+(Math.round(n*100)/100);
+// Percentage-point nudge a single company clue adds to that company's sub-round return (before stacking/circuits).
+function companyClueEffectPts(c){
+  const w=CONFIDENCE_WEIGHT[c.confidence]??1;
+  if(c.kind==='COMPANY')return c.signal*w/INTEL_PRESSURE_DIVISOR*100;
+  if(c.kind==='UPPER_CIRCUIT')return 25*w/INTEL_PRESSURE_DIVISOR*100;
+  if(c.kind==='LOWER_CIRCUIT'||c.kind==='DEFAULTER')return -25*w/INTEL_PRESSURE_DIVISOR*100;
+  return ({BUYBACK:8,DIVIDEND:4,BONUS:3,SPLIT:2}[c.kind]||0)*w/INTEL_PRESSURE_DIVISOR*100;
+}
+function cardEffectText(c){
+  if(c.kind==='MARKET'){
+    const key={'NIFTY 50':'nifty','SENSEX':'sensex','BANK NIFTY':'bankNifty','USD/INR':'usdInr','INDIA VIX':'vix'}[c.index];
+    if(!c.signal)return 'Neutral: no signal';
+    return `Nudges simulated ${c.index} by ≈${pts(c.signal*MARKET_CARD_GAIN[key])} ${key==='vix'?'VIX pts':'%-pts'} (averaged with other players' ${c.index} clues)`;
+  }
+  const e=companyClueEffectPts(c);
+  return `≈${pts(e)}% push on ${c.company} (stacks with others' clues; ±5% circuit still applies)`;
+}
+function intelHelpHtml(){
+  const w=CONFIDENCE_WEIGHT,ex1={kind:'COMPANY',company:'TCS',signal:15,confidence:'Medium'},ex2={kind:'COMPANY',company:'Bharti Airtel',signal:30,confidence:'High'};
+  return `<div class="notice"><b>Private Intel = hints only you can see until the sub-round settles.</b> They are not guarantees: they are real (small) forces in the price formula, and they are added to everyone else's clues.</div>
+  <h3>Reading a clue</h3><ul>
+  <li><b>Company · 🟢/🔴 number</b> (e.g. “TCS · 🟢 +15”): signal strength ${CARD_SIGNALS.company.join(', ')}. It is <b>not rupees and not a guaranteed %</b>. The engine adds <i>signal × confidence ÷ ${INTEL_PRESSURE_DIVISOR.toLocaleString('en-IN')}</i> to that company's return for the sub-round.</li>
+  <li><b>Confidence</b>: Low ×${w.Low}, Medium ×${w.Medium}, High ×${w.High}.</li>
+  <li><b>Market clue</b> (e.g. “BANK NIFTY · 🟢 +30”): signal ${CARD_SIGNALS.market.join(', ')}. It is about a simulated index, not one company. All players' clues for the same index are averaged (confidence-weighted), multiplied by a gain (${Object.entries(MARKET_CARD_GAIN).map(([k,v])=>k+' '+v).join(', ')} per signal point) and added to that index's move. The index then moves companies (see <b>Indices &amp; Market Effects</b> in How to Play).</li>
+  <li><b>Risk clues</b>: ⬆️ Upper-circuit risk = +25×confidence; ⬇️ Lower-circuit risk and ⚠️ Default stress = −25×confidence (same ÷${INTEL_PRESSURE_DIVISOR.toLocaleString('en-IN')} scale). A default-stress clue can also trigger a Defaulter Alert event.</li>
+  <li><b>Dividend / Bonus / Split / Buyback clues</b>: tiny pushes (+4, +3, +2, +8 × confidence). They hint that such an event <i>may</i> happen; they do not cause it.</li>
+  <li><b>Neutral fallback</b>: signal 0, Low confidence. Dealt when no eligible company clue was available; it moves nothing except pulling its index average slightly toward 0.</li></ul>
+  <h3>Worked examples (computed from the live constants)</h3><ul>
+  <li>“TCS · +15 · Medium” → ${pts(companyClueEffectPts(ex1))}% push on TCS.</li>
+  <li>“Bharti Airtel · +30 · High” → ${pts(companyClueEffectPts(ex2))}% push on Bharti Airtel.</li>
+  <li>“BANK NIFTY · +30”, if every BANK NIFTY clue averages +30 → BANK NIFTY ${pts(30*MARKET_CARD_GAIN.bankNifty)} points; HDFC Bank then moves about ${pts(30*MARKET_CARD_GAIN.bankNifty*INDEX_MIX.Banking.bankNifty*1.10)}% from that alone (weight ${INDEX_MIX.Banking.bankNifty} × beta 1.10).</li></ul>
+  <h3>When do clues matter?</h3><ul>
+  <li>Only at <b>settlement</b>: all locked players' clues act once, together with the market regime, indices, FX, VIX and order flow. Nothing changes while you are deciding.</li>
+  <li>Clues from <b>all</b> committed players on the same company are <b>added</b>, then capped at ±${INTEL_PRESSURE_CAP} (±${INTEL_PRESSURE_CAP/10} points). The final move is limited by the ±${CIRCUIT_BAND*100}% circuit band.</li>
+  <li>After settlement every player's hand for that sub-round becomes public in <b>History → Revealed Intel</b>, with the actual outcome.</li>
+  <li>Each sub-round all hands are returned to the pool, reshuffled and re-dealt: 4 company-type clues for 4 different listed companies + 1 market/corporate clue.</li></ul>
+  <h3>Privacy</h3><p>Other players' hands are removed from the state the server sends you; they are not merely hidden on screen. The one exception is the room host: the host's browser runs the game engine and therefore holds every hand (this friend-test build is host-authoritative — play with people you trust).</p>`;
+}
+function indicesHelpBullets(){
+  const d=INDEX_MIX.default,b=INDEX_MIX.Banking;
+  return [
+   'The scrolling ticker at the top is static DEMO reference text. The game engine never reads it. The numbers that matter are the SIMULATED game indices shown in the strip under the ticker and in History.',
+   'Each settlement simulates five values: NIFTY 50, SENSEX, BANK NIFTY (sub-round % change), USD/INR (% change) and INDIA VIX (level 10–40). Simulated index move = regime base + average market clue × gain + small random noise. Regime base: BULL +1.4, BEAR −1.4, PANIC −3.5, SIDEWAYS 0 points. Clamps: NIFTY/SENSEX ±5, BANK NIFTY ±6, USD/INR ±3.',
+   `Index → company prices (directly changes prices): market influence = (NIFTY×w1 + SENSEX×w2 + BANK NIFTY×w3) ÷ 100 × the company's beta. Weights (NIFTY/SENSEX/BANK NIFTY): ${d.nifty}/${d.sensex}/${d.bankNifty} for every company; ${b.nifty}/${b.sensex}/${b.bankNifty} for the Banking sector (HDFC Bank, ICICI Bank).`,
+   `BANK NIFTY therefore already carries weight ${d.bankNifty} on every company and ${b.bankNifty} on HDFC Bank and ICICI Bank. (Before this version every company used ${d.nifty}/${d.sensex}/${d.bankNifty}; the explicit Banking mapping is new and is flagged for your approval.)`,
+   `USD/INR: company effect = USD/INR % × FX beta by sector: IT ${FX_BETA_BY_SECTOR.IT}, Energy/Consumer ${FX_BETA_BY_SECTOR['Energy/Consumer']}, Auto ${FX_BETA_BY_SECTOR.Auto}, every other sector ${FX_BETA_DEFAULT}. (Earlier builds matched sectors by substring and wrongly gave Capital Goods (LT) the IT value.)`,
+   `INDIA VIX: every company gets −max(0, VIX − ${VIX_FLOOR}) ÷ ${VIX_DIVISOR.toLocaleString('en-IN')} (VIX 25 → −1.0 point).`,
+   'Stacking: index, FX and VIX effects ADD to the regime base, private company clues and net order flow (buys − sells). Market clues influence companies only through the index; they never touch a company directly.',
+   `Limits: the sum is clamped to ±${CIRCUIT_BAND*100}% of the sub-round opening price (UPPER/LOWER CIRCUIT) and to ₹0–₹10,000. Index effects do not widen or narrow the band; they can only help hit it. Later news events are also kept inside the same opening-price band.`,
+   'Determinism & replays: given the same seed and decisions the result is identical; settlement runs once per sub-round, so a retry or refresh cannot apply an index effect twice.',
+   'Not modelled: the game does not claim any relationship between these fictional indices and real market data.'
+  ];
+}
+HOW.push(
+ {t:'15. Private Intel',d:'How to read your clue chips and when they matter.',b:['Each active player has their own 5-card hand every sub-round.','Company clue = signal × confidence ÷ 1,000 added to that company\'s return.','Market clue = averaged nudge to a simulated index.','All clues act once, at settlement, and become public afterwards.','Open “How to read Private Intel” on the Live Game page for worked examples.']},
+ {t:'16. Indices & Market Effects',d:'What NIFTY 50, SENSEX, BANK NIFTY, USD/INR and INDIA VIX do inside this fictional game.',b:indicesHelpBullets()}
+);
 
 function makePlayer(i,name=NAMES[i]||`Player ${i+1}`){
   const profile=i===0?'human':BOT_PROFILES[1+((i-1)%(BOT_PROFILES.length-1))].style;
@@ -319,7 +392,9 @@ S=freshState();
 const $=id=>document.getElementById(id);
 const money=n=>'₹'+Math.round(n).toLocaleString('en-IN');
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-function rand(){S.rng=S.rng||mulberry32(S.seed);return S.rng();}
+// The generator itself is not serialisable; S.rngN counts draws so a restored host resumes the SAME sequence
+// instead of replaying it from the start (which repeated shuffles/regimes after a host refresh).
+function rand(){if(!S.rng){S.rng=mulberry32(S.seed);for(let k=0,n=S.rngN||0;k<n;k++)S.rng();}S.rngN=(S.rngN||0)+1;return S.rng();}
 function mulberry32(a){return function(){let t=a+=0x6D2B79F5;t=Math.imul(t^t>>>15,t|1);t^=t+Math.imul(t^t>>>7,t|61);return((t^t>>>14)>>>0)/4294967296}}
 function shuffle(a){const x=a.slice();for(let i=x.length-1;i>0;i--){const j=Math.floor(rand()*(i+1));[x[i],x[j]]=[x[j],x[i]]}return x}
 function toast(msg){$('toast').textContent=msg;$('toast').classList.add('show');clearTimeout(toast.t);toast.t=setTimeout(()=>$('toast').classList.remove('show'),2200)}
@@ -340,18 +415,22 @@ function renderLobby(){
   document.querySelectorAll('[data-name]').forEach(inp=>inp.oninput=e=>{if(!S.started){S.players[+e.target.dataset.name].name=e.target.value||('Player '+(+e.target.dataset.name+1));renderGame()}})
   $('companyChips').innerHTML=S.stocks.map(s=>`<span class="chip">${esc(s.name)}</span>`).join('');
 }
+function renderSimIndices(){
+  const el=$('simIndices');if(!el)return;const m=S.market||{},f=v=>(v>=0?'+':'')+(+v).toFixed(2)+'%';
+  el.innerHTML=S.history&&S.history.length?`<b>SIMULATED GAME INDICES (these drive prices; the ticker above does not)</b> · last settlement: NIFTY ${f(m.nifty)} · SENSEX ${f(m.sensex)} · BANK NIFTY ${f(m.bankNifty)} · USD/INR ${f(m.usdInr)} · VIX ${(+m.vix).toFixed(1)} · ${esc(S.regime)} regime`:`<b>SIMULATED GAME INDICES</b> drive prices; the ticker above is static demo text. They are generated at the first settlement.`;
+}
 function renderGame(){
-  const p=S.players[localPlayerId]||S.players[0], st=S.stocks[S.selected];
-  $('roundTitle').textContent=(S.round<=10?'Round '+S.round:'Bonus Round 11')+' · Sub-Round '+S.subRound+'/2';
-  $('phaseText').textContent=S.phase==='DECISION'?'Choose, edit and lock your decisions. Bots have already prepared hidden decisions.':S.phase==='IPO_BID'?'IPO bidding is open. Place/update your bid before the 2-minute window closes.':S.phase==='IPO_COMPLETE'?'IPO allocation complete. Admin can continue to the round.':S.phase==='REVIEW'?'Review your choices. Nothing is revealed until CONFIRM & REVEAL.':S.phase==='REVEAL'?'Decisions revealed. Market is being resolved.':S.phase==='COMPLETE'?'Round complete. Admin can start the next round.':S.phase==='GAME OVER'?'Game over.':'Admin must start the round.';
+  const p=S.players[localPlayerId]||S.players[0], st=S.stocks[S.selected], cs=controlState();
+  $('roundTitle').textContent=(S.round<=10?'Round '+S.round:'Bonus Round 11')+' · Sub-Round '+S.subRound+'/2'+(S.phase==='COMPLETE'&&S.settled?' · settled':'');
+  $('phaseText').textContent=cs.desc;
   $('statusPill').textContent=S.phase;
+  renderSimIndices();
   $('timerPill').textContent=S.phase==='DECISION'?'Timer: '+S.timerLeft+'s':'Timer: —';
-  $('startRound').disabled=!S.started||S.gameOver||S.vitoPromptOpen||!(S.phase==='LOBBY'||S.phase==='COMPLETE')||S.round>11;
-  $('startRound').textContent=S.phase==='LOBBY'?'ADMIN: START GAME ROUND':`ADMIN: START R${S.round} · SUB-ROUND ${S.subRound}`;
+  $('startRound').disabled=cs.startDisabled;$('startRound').textContent=cs.startLabel;$('startRound').title=cs.startDisabled?cs.startReason:'';
   $('lock').disabled=S.phase!=='DECISION'||p.locked;
   $('confirm').style.display=S.phase==='REVIEW'?'inline-block':'none';
   $('confirm').disabled=S.phase!=='REVIEW';
-  $('nextRound').disabled=S.vitoPromptOpen||!(S.phase==='COMPLETE'||S.phase==='IPO_COMPLETE');
+  $('nextRound').disabled=cs.nextDisabled;$('nextRound').textContent=cs.nextLabel;$('nextRound').title=cs.nextDisabled?cs.nextReason:'';
   $('endGame').disabled=!S.started||S.gameOver||S.vitoPromptOpen||!(S.phase==='LOBBY'||S.phase==='COMPLETE');
   $('quitGame').disabled=!S.started||S.gameOver||!p.active;
   $('skip').disabled=S.phase!=='DECISION'||(S.round===1&&S.subRound===1)||p.actions.length>=maxActions()||p.locked||!legalCompanyFor(p,S.selected);
@@ -375,7 +454,7 @@ function renderGame(){
   const selectedMoveClass=st.price>previousSelectedPrice?'up':st.price<previousSelectedPrice?'down':'flat',selectedMoveLabel=previousSelectedPrice===0?(st.price>0?`Recovered from ₹0 to ${money(st.price)}`:'Stayed at ₹0'):`${st.price>=previousSelectedPrice?'+':''}${(((st.price-previousSelectedPrice)/previousSelectedPrice)*100).toFixed(1)}% this round`;
   $('selected').innerHTML=`<h2 style="margin:0">${esc(st.name)}</h2><div class="price">${money(st.price)} <span class="${selectedMoveClass}" style="font-size:14px">${selectedMoveLabel}</span></div><div class="tiny">Held by players: ${heldByPlayers.toLocaleString('en-IN')} / 10,000 · Treasury: ${(st.treasury||0).toLocaleString('en-IN')} · Available: ${st.total.toLocaleString('en-IN')} · Your holding: ${own.toLocaleString('en-IN')}</div><div class="chart"><svg viewBox="0 0 380 130" preserveAspectRatio="none"><path d="M10 118 L370 118" stroke="#294563" fill="none"/><polyline points="${points}" fill="none" stroke="#3190ff" stroke-width="3"/></svg></div>`;
   $('tradeRule').innerHTML=!tradable(S.selected)?(st.ipo&&!st.listed?'🔒 IPO is not listed yet. Trading is locked.':st.vitoHaltedUntilRound>S.round?'⏸ VITO halt remains until Main Round '+st.vitoHaltedUntilRound+'.':st.price===0?'₹0: trading is paused at zero in this build, but company-card effects still apply. Positive net company-card pressure can restore a positive price.':'⛔ Trading is temporarily halted.'):(st.circuit?('⛔ '+st.circuit+' circuit: price movement is capped this sub-round.'):(r1BuyOnly?'R1 Sub-Round 1: BUY 2–5 distinct companies only; no SELL or SKIP.':`R${S.round} · SR${S.subRound}: up to ${maxActions()} actions. BUY 200–500. SELL: ${eligibleSelectedQty} eligible shares; max ${maxSellQty} in one action. At 200–399 eligible shares, all may be sold; at 400+, max 50% of eligible shares. Only shares held through 2 complete Sub-Rounds qualify. SKIP allowed.`));
-  $('myStats').innerHTML=`<div class="stat"><small>Cash</small><b>${money(p.cash)}</b></div><div class="stat"><small>Portfolio</small><b>${money(portfolioValue(p))}</b></div><div class="stat"><small>Total shares</small><b>${totalShares(p).toLocaleString('en-IN')}</b></div><div class="stat"><small>Actions</small><b>${p.actions.length} / ${maxActions()}</b></div>`;
+  $('myStats').innerHTML=`<div class="stat"><small>Cash</small><b>${money(p.cash)}</b></div><div class="stat"><small>Portfolio</small><b>${money(portfolioValue(p))}</b></div><div class="stat"><small>Total shares</small><b>${totalShares(p).toLocaleString('en-IN')}</b></div><div class="stat"><small>Actions (${cs.limitSlot})</small><b>${p.actions.length} / ${cs.limit}</b></div>`;
   $('myHoldings').innerHTML=S.stocks.map((s,i)=>p.holdings[i]?`<tr><td>${esc(s.name)}</td><td>${p.holdings[i].toLocaleString('en-IN')}</td><td>${money(p.holdings[i]*s.price)}</td><td>${p.avg[i]?money(p.avg[i]):'—'}</td></tr>`:'').join('')||'<tr><td colspan="4">No holdings yet.</td></tr>';
   $('pending').innerHTML=p.actions.length?p.actions.map((a,i)=>`<div class="decision decisionLine"><span>${a.type==='SKIP'?'SKIP':a.type+' '+a.qty+' '+esc(S.stocks[a.i].name)+' @ '+money(a.price)}</span><button class="btn ghost" data-remove-action="${i}" ${S.phase!=='DECISION'||p.locked||!p.active?'disabled':''} aria-label="Remove pending action ${i+1}">REMOVE</button></div>`).join(''):'<div class="notice">No decisions yet.</div>';
   document.querySelectorAll('[data-remove-action]').forEach(btn=>btn.onclick=()=>removePendingAction(+btn.dataset.removeAction));
@@ -541,7 +620,7 @@ function renderPrivateIntel(){
   const el=$('intelHand');
   if(!el)return;
   if(!p.privateCards.length){el.innerHTML='<div class="notice">No private cards yet. A random hand is dealt when the round starts.</div>';return;}
-  el.innerHTML=p.privateCards.map(c=>`<div class="chip" title="${esc(c.detail||'Private intel')}">${esc(cardLabel(c))}<br><span class="tiny">${esc(c.confidence||'Medium')} · private</span></div>`).join('');
+  el.innerHTML=p.privateCards.map(c=>`<div class="chip" title="${esc((c.detail||'Private intel')+' — '+cardEffectText(c))}">${esc(cardLabel(c))}<br><span class="tiny">${esc(c.confidence||'Medium')} confidence · private</span><br><span class="tiny">${esc(cardEffectText(c))}</span></div>`).join('');
 }
 function renderRevealedIntel(){
   const el=$('revealedIntel'); if(!el)return;
@@ -594,13 +673,13 @@ function dealIntel(){
   });
   S.currentIntel=S.players.filter(p=>p.active).map(p=>({player:p.id,cards:p.privateCards.map(c=>({...c}))}));
 }
-function confidenceWeight(level){return level==='High'?1.5:level==='Low'?.5:1;}
+function confidenceWeight(level){return CONFIDENCE_WEIGHT[level]??1;}
 function intelPressure(i){
   let n=0;
   // A player who quits after locking remains committed for this Sub-Round, so their
   // already-dealt private intel must still influence the simultaneous market resolution.
   committedPlayers().forEach(p=>p.privateCards.forEach(c=>{if(c.i!==i)return;const w=confidenceWeight(c.confidence);if(c.kind==='COMPANY')n+=c.signal*w;else if(c.kind==='UPPER_CIRCUIT')n+=25*w;else if(c.kind==='LOWER_CIRCUIT'||c.kind==='DEFAULTER')n-=25*w;else if(c.kind==='BUYBACK')n+=8*w;else if(c.kind==='DIVIDEND')n+=4*w;else if(c.kind==='BONUS')n+=3*w;else if(c.kind==='SPLIT')n+=2*w;}));
-  return Math.max(-60,Math.min(60,n));
+  return Math.max(-INTEL_PRESSURE_CAP,Math.min(INTEL_PRESSURE_CAP,n));
 }
 function marketCardPressure(){
   // Keep locked quitters in the current Sub-Round's simultaneous market calculation.
@@ -628,7 +707,51 @@ function renderAll(){if(S&&S.silent)return;renderLobby();renderGame();renderPlay
 function totalShares(p){return p.holdings.reduce((a,b)=>a+b,0)}
 function portfolioValue(p){return p.cash+(p.ipoFrozen||0)+S.stocks.reduce((a,s,i)=>a+(p.holdings[i]||0)*s.price,0)}
 function currentSubRoundIndex(){return (S.round-1)*2+(S.subRound-1)}
-function maxActions(){if(S.round===1&&S.subRound===1)return 5;if(S.round===1&&S.subRound===2)return 3;if(S.round>=2&&S.round<=9)return 3;if(S.round===10||S.round===11)return 5;return 0}
+function maxActionsFor(round,subRound){if(round===1&&subRound===1)return 5;if(round===1&&subRound===2)return 3;if(round>=2&&round<=9)return 3;if(round===10||round===11)return 5;return 0}
+function maxActions(){return maxActionsFor(S.round,S.subRound)}
+// ---------------- Round state machine ----------------
+// S.phase + S.round/S.subRound + S.settled are the ONLY inputs to every label and button below.
+// S.round/S.subRound always name the slot being played or just settled; S.settled=true means that slot has resolved
+// and the admin must ADVANCE (NEXT) before anything else can start. Legal transitions (anything else is ignored):
+//   LOBBY|COMPLETE(!settled) --START--> DECISION            (or IPO_BID when an IPO window opens first)
+//   IPO_BID --timer--> IPO_COMPLETE --CONTINUE--> COMPLETE(!settled) --START--> DECISION
+//   DECISION --all locked / timer--> REVIEW --CONFIRM--> REVEAL --resolve--> COMPLETE(settled)
+//   REVIEW|REVEAL --invalid batch--> DECISION (reopened, live timer)
+//   COMPLETE(settled) --ADVANCE--> COMPLETE(!settled, next slot)   or   GAME OVER
+const LEGAL_TRANSITIONS={LOBBY:['DECISION','IPO_BID','GAME OVER'],COMPLETE:['DECISION','IPO_BID','COMPLETE','GAME OVER'],IPO_BID:['IPO_COMPLETE','GAME OVER'],IPO_COMPLETE:['COMPLETE','GAME OVER'],DECISION:['REVIEW','REVEAL','GAME OVER'],REVIEW:['REVEAL','DECISION','GAME OVER'],REVEAL:['COMPLETE','DECISION','GAME OVER'],'GAME OVER':[]};
+function nextSlot(){
+  if(!S.settled)return {round:S.round,subRound:S.subRound};
+  if(S.subRound===1)return {round:S.round,subRound:2};
+  if(S.round<10)return {round:S.round+1,subRound:1};
+  if(S.round===10)return shouldOpenBonusRound()?{round:11,subRound:1}:null;
+  return null;
+}
+const slotLabel=sl=>`R${sl.round} · SUB-ROUND ${sl.subRound}`;
+function controlState(){
+  const cur={round:S.round,subRound:S.subRound},slot=nextSlot(),here=slotLabel(cur);
+  const out={startDisabled:true,nextDisabled:true,startLabel:slot?`ADMIN: START ${slotLabel(slot)}`:'ADMIN: GAME COMPLETE',nextLabel:'ADMIN: NEXT ROUND',startReason:'',nextReason:'',desc:'',limit:maxActionsFor(cur.round,cur.subRound),limitSlot:`R${cur.round}·SR${cur.subRound}`};
+  if(S.gameOver||S.phase==='GAME OVER'){out.desc='Game over.';out.startReason=out.nextReason='The game has ended.';out.startLabel='ADMIN: GAME OVER';return out;}
+  if(!S.started){out.desc='Admin must start the game.';out.startReason=out.nextReason='The game has not started.';return out;}
+  const showSlot=['DECISION','REVIEW','REVEAL'].includes(S.phase)?cur:(slot||cur);out.limit=maxActionsFor(showSlot.round,showSlot.subRound);out.limitSlot=`R${showSlot.round}·SR${showSlot.subRound}`;
+  if(S.vitoPromptOpen){out.desc='A VITO decision is pending.';out.startReason=out.nextReason='Resolve the pending VITO decision first.';return out;}
+  switch(S.phase){
+    case 'LOBBY':out.startDisabled=false;out.desc='Admin must start the first sub-round.';out.nextReason='Nothing to advance yet.';break;
+    case 'DECISION':out.startLabel=`${here} IN PROGRESS`;out.desc='Choose, edit and lock your decisions. Bots have already prepared hidden decisions.';out.startReason=out.nextReason='Decisions are open for this sub-round.';break;
+    case 'REVIEW':out.startLabel=`${here} IN REVIEW`;out.desc='Review your choices. Nothing is revealed until CONFIRM & REVEAL.';out.startReason=out.nextReason='Waiting for CONFIRM & REVEAL.';break;
+    case 'REVEAL':out.startLabel=`${here} SETTLING`;out.desc='Decisions revealed. Market is being resolved.';out.startReason=out.nextReason='Settlement is in progress.';break;
+    case 'IPO_BID':out.startLabel='IPO WINDOW OPEN';out.desc='IPO bidding is open. Place/update your bid before the 2-minute window closes.';out.startReason=out.nextReason='The IPO bidding window is open.';break;
+    case 'IPO_COMPLETE':out.nextDisabled=false;out.nextLabel='ADMIN: CONTINUE AFTER IPO';out.startReason='Continue past the IPO window first.';out.desc='IPO allocation complete. Admin can continue to the round.';break;
+    case 'COMPLETE':
+      if(S.settled){
+        out.nextDisabled=false;out.nextLabel=slot?`ADMIN: ADVANCE → ${slotLabel(slot)}`:'ADMIN: FINISH GAME';
+        out.startReason=`${here} is already settled. Press ADVANCE first.`;
+        out.desc=slot?`${here.replace('SUB-ROUND','Sub-Round')} settled. Next: ${slotLabel(slot).replace('SUB-ROUND','Sub-Round')}. Admin presses ADVANCE.`:`${here.replace('SUB-ROUND','Sub-Round')} settled. That was the final sub-round; Admin presses FINISH GAME.`;
+      }else{out.startDisabled=false;out.nextReason=`Nothing to advance: ${here} has not been played yet.`;out.desc=`${here.replace('SUB-ROUND','Sub-Round')} is ready. Admin can start it.`;}
+      break;
+    default:out.desc='Admin must start the round.';
+  }
+  return out;
+}
 function activePlayers(){return S.players.filter(p=>p.active)}
 function committedPlayers(){return S.players.filter(p=>p.active||(p.frozen&&p.locked))}
 function tradable(i){const s=S.stocks[i];return !!s&&s.price>0&&(!s.ipo||s.listed)&&!(s.vitoHaltedUntilRound>S.round)}
@@ -683,6 +806,7 @@ function removePendingAction(index){
   const p=S.players[localPlayerId]||S.players[0];if(S.phase!=='DECISION'||p.locked||!p.active||!Number.isInteger(index)||index<0||index>=p.actions.length)return false;
   p.actions.splice(index,1);renderAll();toast('Pending action removed. You can choose a replacement before locking.');return true;
 }
+$('intelHelp').onclick=()=>modal('How to read Private Intel',intelHelpHtml());
 $('buy').onclick=()=>addAction('BUY',S.selected,+$('qty').value);
 $('sell').onclick=()=>addAction('SELL',S.selected,+$('qty').value);
 $('sellMax').onclick=()=>addAction('SELL',S.selected,maxSellActionQty(S.players[localPlayerId]||S.players[0],S.selected),{sellMax:true});
@@ -725,7 +849,7 @@ function startGame(){
   if(S.players.length<2||S.players.length>10)return toast('Players must be 2–10.');
   captureLedgerBaseline();
   S.started=true;S.phase='LOBBY';S.round=1;S.subRound=1;S.timer=+$('timer').value;S.ipoPlan=$('ipoPlan').value;S.eventsOn=$('eventsOn').checked;S.bonusOn=$('bonusOn').checked;S.lastMainRoundClose=S.stocks.map(s=>s.price);
-  S.seed=Math.floor(Math.random()*2147483646)+1;S.rng=mulberry32(S.seed);
+  S.seed=Math.floor(Math.random()*2147483646)+1;S.rng=mulberry32(S.seed);S.rngN=0;
   renderAll();page('game');toast('Game started. Admin can start Round 1.');
 }
 $('startGame').onclick=startGame;
@@ -740,6 +864,7 @@ let timerId=null;
 function startRound(){
   if(!S.started||S.gameOver)return;
   if(!(S.phase==='LOBBY'||S.phase==='COMPLETE'))return;
+  if(S.settled||S.vitoPromptOpen)return; // a settled slot must be ADVANCEd, never restarted
   if(S.round>11)return;
   unlockIPOs();S.event=null;S.stocks.forEach(s=>s.circuit=null);S.previousPrices=S.stocks.map(s=>s.price);
   if(S.subRound===1&&S.round===3&&S.ipoPlan!=='none'&&S.ipoLaunched<1){launchIPO(1);return;}
@@ -771,7 +896,7 @@ $('lock').onclick=()=>{
   const p=S.players[localPlayerId]||S.players[0];if(!p.active)return;
   if(S.round===1&&S.subRound===1&&(p.actions.length<2||p.actions.length>5||p.actions.some(a=>a.type!=='BUY'))){setValidation('R1 Sub-Round 1 requires 2–5 BUY actions in distinct companies.');return;}
   p.locked=true;p.status='Locked';if(activePlayers().every(x=>x.locked))S.phase='REVIEW';renderAll();
-  if(S.phase==='REVIEW'){modal('ALL PLAYERS LOCKED',`<div class="notice"><b>Everyone is locked.</b><br>Review your choices. Nothing is revealed until confirmation.</div><div class="actions"><button id="modalReveal" class="btn gold">CONFIRM & REVEAL</button></div>`);$('modalReveal').onclick=()=>{$('modalBack').classList.remove('show');activePlayers().forEach(p=>p.confirmed=true);S.phase='REVEAL';renderAll();setTimeout(resolveRound,250);};}
+  if(S.phase==='REVIEW'){modal('ALL PLAYERS LOCKED',`<div class="notice"><b>Everyone is locked.</b><br>Review your choices. Nothing is revealed until confirmation.</div><div class="actions"><button id="modalReveal" class="btn gold">CONFIRM & REVEAL</button></div>`);$('modalReveal').onclick=()=>{$('modalBack').classList.remove('show');if(S.phase!=='REVIEW')return;activePlayers().forEach(p=>p.confirmed=true);S.phase='REVEAL';renderAll();setTimeout(resolveRound,250);};}
 };
 $('confirm').onclick=()=>{if(S.phase!=='REVIEW')return;activePlayers().forEach(p=>p.confirmed=true);S.phase='REVEAL';renderAll();setTimeout(resolveRound,450);};
 
@@ -820,18 +945,18 @@ function resolvePrices(buy,sell){
   S.regime=chooseRegime();
   const base={BULL:.014,BEAR:-.014,PANIC:-.035,SIDEWAYS:0}[S.regime];
   const mp=marketCardPressure();
-  S.market.nifty=Math.max(-5,Math.min(5,Math.round(((base*100)+mp.nifty*.03+(rand()-.5)*1.2)*100)/100));
-  S.market.sensex=Math.max(-5,Math.min(5,Math.round(((base*100)+mp.sensex*.03+(rand()-.5)*1.2)*100)/100));
-  S.market.bankNifty=Math.max(-6,Math.min(6,Math.round(((base*100)+mp.bankNifty*.04+(rand()-.5)*1.5)*100)/100));
-  S.market.usdInr=Math.max(-3,Math.min(3,Math.round((mp.usdInr*.025+(rand()-.5)*.8)*100)/100));
-  S.market.vix=Math.max(10,Math.min(40,(S.regime==='PANIC'?S.market.vix+8+Math.floor(rand()*5):S.market.vix+(S.regime==='BULL'?-2:1))+mp.vix*.05));
+  S.market.nifty=Math.max(-5,Math.min(5,Math.round(((base*100)+mp.nifty*MARKET_CARD_GAIN.nifty+(rand()-.5)*1.2)*100)/100));
+  S.market.sensex=Math.max(-5,Math.min(5,Math.round(((base*100)+mp.sensex*MARKET_CARD_GAIN.sensex+(rand()-.5)*1.2)*100)/100));
+  S.market.bankNifty=Math.max(-6,Math.min(6,Math.round(((base*100)+mp.bankNifty*MARKET_CARD_GAIN.bankNifty+(rand()-.5)*1.5)*100)/100));
+  S.market.usdInr=Math.max(-3,Math.min(3,Math.round((mp.usdInr*MARKET_CARD_GAIN.usdInr+(rand()-.5)*.8)*100)/100));
+  S.market.vix=Math.max(10,Math.min(40,(S.regime==='PANIC'?S.market.vix+8+Math.floor(rand()*5):S.market.vix+(S.regime==='BULL'?-2:1))+mp.vix*MARKET_CARD_GAIN.vix));
   const moves=[];
   S.stocks.forEach((s,i)=>{
     if(!priceMovable(i)){moves.push({i,old:s.price,np:s.price,pct:0,circuit:s.circuit,marketInfluence:0,cardInfluence:0,halted:true,recoveredFromZero:false});return;}
     const net=buy[i]-sell[i];
-    const marketInfluence=((S.market.nifty*.35+S.market.sensex*.25+S.market.bankNifty*.40)/100)*s.beta;
-    const sector=String(s.sector||'').toLowerCase(),fxBeta=sector.includes('it')?.45:sector.includes('energy')?-.35:sector.includes('auto')?-.2:.05;
-    const fxInfluence=(S.market.usdInr/100)*fxBeta,riskInfluence=-Math.max(0,S.market.vix-15)/1000,cardInfluence=(intelPressure(i)/1000);
+    const mix=indexMixFor(s.sector),marketInfluence=((S.market.nifty*mix.nifty+S.market.sensex*mix.sensex+S.market.bankNifty*mix.bankNifty)/100)*s.beta;
+    const fxBeta=fxBetaFor(s.sector);
+    const fxInfluence=(S.market.usdInr/100)*fxBeta,riskInfluence=-Math.max(0,S.market.vix-VIX_FLOOR)/VIX_DIVISOR,cardInfluence=(intelPressure(i)/INTEL_PRESSURE_DIVISOR);
     let raw=base+marketInfluence+fxInfluence+riskInfluence+cardInfluence+Math.max(-.10,Math.min(.10,(net/10000)*.20));
     if(Math.abs(raw)<.006&&net)raw=net>0?.006:-.006;
     const old=s.price;let np=0,recoveredFromZero=false,recoveryBasis=null;
@@ -844,7 +969,7 @@ function resolvePrices(buy,sell){
       s.circuit=null; // A ±5% band around zero is mathematically zero and cannot govern a positive recovery.
     }else{
       const uncapped=old*(1+raw);np=Math.max(0,Math.min(10000,Math.round(uncapped)));
-      const upper=Math.round(old*1.05),lower=Math.round(old*.95);
+      const upper=Math.round(old*(1+CIRCUIT_BAND)),lower=Math.round(old*(1-CIRCUIT_BAND));
       s.circuit=null;
       if(np>upper){np=upper;s.circuit='UPPER CIRCUIT';}
       if(np<lower){np=lower;s.circuit='LOWER CIRCUIT';}
@@ -1078,7 +1203,7 @@ function resolveRound(){
       return false;
     }
     if(overLimit.id===0||overLimit.remoteHuman){
-      overLimit.actions=overLimit.actions.slice(0,allowed);
+      // Keep every order: the player must choose which to remove. Silently truncating would discard orders without consent.
       return reopenForCorrection(overLimit,`${overLimit.name}: this Sub-Round allows at most ${allowed} actions. No trades were executed; correct the orders.`);
     }
     // Local bot decisions are not client-authored. Regenerate the hidden bot batch before any fill.
@@ -1114,7 +1239,7 @@ function resolveRound(){
   S.history.push({seed:S.seed,round:S.round,subRound:S.subRound,regime:S.regime,nifty:S.market.nifty,sensex:S.market.sensex,vix:S.market.vix,buy:buy.reduce((a,b)=>a+b,0),sell:sell.reduce((a,b)=>a+b,0),event:S.event?.title||'None',eventType:S.event?.type||null,eventCompanyIndex:S.event?.companyIndex??null,startPrices:S.previousPrices.slice(),topMove,why,circuits:moves.filter(m=>m.circuit).map(m=>({company:S.stocks[m.i].name,type:m.circuit})),priceRecoveries:moves.filter(m=>m.recoveredFromZero).map(m=>({stockIndex:m.i,company:S.stocks[m.i].name,netCardPressure:m.netCardPressure,recoveryBasis:m.recoveryBasis,priceAfterMove:m.np})),snapshot:{stockNames:S.stocks.map(s=>s.name),prices:S.stocks.map(s=>s.price),availableShares:S.stocks.map(s=>s.total),treasuryShares:S.stocks.map(s=>s.treasury||0),players:S.players.map(p=>({id:p.id,name:p.name,cash:p.cash,ipoFrozen:p.ipoFrozen,holdings:p.holdings.slice(),avg:p.avg.slice(),lots:p.lots.map(ls=>ls.map(l=>({...l}))),active:p.active,vitoUsed:p.vitoUsed,status:p.status}))}});
   S.replay.push(...committedPlayers().map(p=>({round:S.round,subRound:S.subRound,player:p.name,text:p.actions.map(a=>a.type==='SKIP'?'SKIP':(a.type+(a.sellMax?' MAX':'')+' '+a.qty+' '+S.stocks[a.i].name+' @ '+money(a.price))).join(' · ')||'No action / timeout'})));
   S.players.forEach(p=>{p.actions=[];p.locked=false;p.confirmed=false;if(p.active)p.status=p.id===0?'Admin':'Ready';});
-  S.phase='COMPLETE';S.roundResult={round:S.round,subRound:S.subRound,buyFills:fills,sellFills,buy,sell};if(S.event)S.botLog.push(`R${S.round} SR${S.subRound} EVENT: ${S.event.title}`);
+  S.phase='COMPLETE';S.settled=true;S.roundResult={round:S.round,subRound:S.subRound,buyFills:fills,sellFills,buy,sell};if(S.event)S.botLog.push(`R${S.round} SR${S.subRound} EVENT: ${S.event.title}`);
   if(S.subRound===2)S.pendingCloseUpdate=true;
   unlockIPOs();renderAll();checkVITO();renderAll();
   if(S.localHumanQuit)endGame('The local human/admin quit; committed decisions and applicable events for the current Sub-Round were resolved before the game ended.');
@@ -1145,17 +1270,15 @@ function handleLocalHumanQuit({deferResolution=true}={}){
 }
 $('quitGame').onclick=()=>{const p=S.players[localPlayerId]||S.players[0];if(!p.active)return;modal('QUIT GAME',`<p>Your portfolio and game participation will freeze; you cannot re-enter.</p><div class="notice">${p.locked?'Your locked decisions remain committed for this sub-round.':'Your unresolved decisions will be discarded. Any unallocated IPO bid will be cancelled and refunded.'}</div><div class="actions"><button id="quitYes" class="btn danger">QUIT & FREEZE</button></div>`);$('quitYes').onclick=()=>{$('modalBack').classList.remove('show');handleLocalHumanQuit();toast('Portfolio frozen. Any outstanding IPO bids were refunded.');};};
 $('nextRound').onclick=()=>{
-  if(S.vitoPromptOpen)return;
+  if(S.vitoPromptOpen||S.gameOver)return;
   if(S.phase==='IPO_COMPLETE'){S.phase='COMPLETE';renderAll();toast('IPO window complete. Start the next sub-round when ready.');return;}
-  if(S.phase!=='COMPLETE')return;
-  if(S.subRound===1){S.subRound=2;S.phase='COMPLETE';renderAll();toast(`Main Round ${S.round} Sub-Round 2 is ready.`);return;}
-  // The second sub-round has completed; this is the Main Round close.
-  finishMainRoundCloseIfPending();
-  if(S.round===11){endGame('Bonus Round 11 completed. No Round 12 exists.');return;}
-  if(S.round===10){
-    if(shouldOpenBonusRound()){S.round=11;S.subRound=1;toast('Game Brain opened Bonus Round 11.');}else{endGame('Normal game ended after Round 10.');return;}
-  }else{S.round++;S.subRound=1;}
-  S.phase='COMPLETE';renderAll();
+  if(S.phase!=='COMPLETE'||!S.settled)return; // only a settled slot can be advanced
+  const slot=nextSlot();
+  if(S.subRound===2)finishMainRoundCloseIfPending();
+  if(!slot){endGame(S.round===11?'Bonus Round 11 completed. No Round 12 exists.':'Normal game ended after Round 10.');return;}
+  if(S.round===10&&slot.round===11)toast('Game Brain opened Bonus Round 11.');
+  else if(slot.round===S.round)toast(`Main Round ${S.round} Sub-Round ${slot.subRound} is ready.`);
+  S.round=slot.round;S.subRound=slot.subRound;S.settled=false;S.phase='COMPLETE';renderAll();
 };
 $('endGame').onclick=()=>{if(!S.vitoPromptOpen&&(S.phase==='LOBBY'||S.phase==='COMPLETE'))endGame('Admin ended the game between completed sub-rounds.');};
 function shouldOpenBonusRound(){
@@ -1651,7 +1774,7 @@ placeIPOBid=function(idx,shares){if(onlineRoom&&!onlineHost){onlineSendCommand({
 // A client may lock only their own seat; only the host can reveal/advance the market.
 document.getElementById('lock').addEventListener('click',e=>{if(onlineRoom&&!onlineHost){e.preventDefault();e.stopImmediatePropagation();onlineSendCommand({type:'LOCK'});onlineStatus('Lock request sent to host.');}},true);
 document.getElementById('quitGame').addEventListener('click',e=>{if(onlineRoom&&!onlineHost){e.preventDefault();e.stopImmediatePropagation();if(confirm('Quit this game? Your portfolio will freeze and you cannot rejoin this room.'))onlineSendCommand({type:'QUIT'});}},true);
-function onlineApplyPermissions(){if(!onlineRoom)return;for(const id of ['startRound','confirm','nextRound','endGame']){const el=document.getElementById(id);if(el&&!onlineHost){el.disabled=true;el.title='Only the room host can use this control.';}else if(el){el.title='';}}const qa=document.querySelector('[data-page="qa"]');if(qa)qa.style.display='none';const start=document.getElementById('startGame');if(start){start.textContent=onlineHost?'START ONLINE GAME':'WAITING FOR HOST';start.disabled=!onlineHost||S.started||(S.players.length<2);}document.getElementById('playerCount').disabled=true;document.querySelectorAll('[data-name]').forEach(el=>el.disabled=true);document.getElementById('timer').disabled=!onlineHost;document.getElementById('ipoPlan').disabled=!onlineHost;document.getElementById('eventsOn').disabled=!onlineHost;document.getElementById('bonusOn').disabled=!onlineHost;}
+function onlineApplyPermissions(){if(!onlineRoom)return;for(const id of ['startRound','confirm','nextRound','endGame']){const el=document.getElementById(id);if(el&&!onlineHost){el.disabled=true;el.title='Only the room host can use this control.';}/* host: keep the reason set by controlState() */}const qa=document.querySelector('[data-page="qa"]');if(qa)qa.style.display='none';const start=document.getElementById('startGame');if(start){start.textContent=onlineHost?'START ONLINE GAME':'WAITING FOR HOST';start.disabled=!onlineHost||S.started||(S.players.length<2);}document.getElementById('playerCount').disabled=true;document.querySelectorAll('[data-name]').forEach(el=>el.disabled=true);document.getElementById('timer').disabled=!onlineHost;document.getElementById('ipoPlan').disabled=!onlineHost;document.getElementById('eventsOn').disabled=!onlineHost;document.getElementById('bonusOn').disabled=!onlineHost;}
 const oldRenderAll=renderAll;renderAll=function(){oldRenderAll();onlineApplyPermissions();};
 const oldRenderGame=renderGame;renderGame=function(){oldRenderGame();onlineApplyPermissions();};
 const oldStartGame=startGame;startGame=function(){if(onlineRoom&&!onlineHost)return;if(onlineRoom&&S.players.length<2){toast('At least 2 real players must join before starting.');return;}if(onlineRoom){S.playerCount=S.players.length;S.players.forEach((p,i)=>{p.remoteHuman=i!==0;p.profile=i===0?'human':'remote';});}oldStartGame();onlineNavigated=!!onlineRoom;};document.getElementById('startGame').onclick=()=>startGame();

@@ -15,7 +15,26 @@ function readBody(req){return new Promise((resolve,reject)=>{let raw='';req.on('
 function cleanRoom(room){ if(Date.now()-room.touchedAt>ROOM_TTL_MS) rooms.delete(room.code); }
 function memberFor(room, t){ return room.members.find(m=>m.token===t); }
 function safeMembers(room){ return room.members.map(({id,name,host,ready,lastSeen})=>({id,name,host:!!host,ready:!!ready,online:!lastSeen||Date.now()-lastSeen<15000})); }
-function personalizedState(room, member){ if(!room.state) return null; const state=JSON.parse(JSON.stringify(room.state)); if(!member.host && Array.isArray(state.players)){ for(const p of state.players){ if(p.id!==member.id) p.privateCards=[]; } } return state; }
+// Per-member view of the authoritative host state. The HOST receives everything (its browser runs the engine).
+// A GUEST receives only: its own private cards, its own pending orders/bids, and public data. Hidden information is
+// removed here, in the protocol — never merely hidden by CSS. Identity comes from the room token, never from the request.
+function personalizedState(room, member){
+  if(!room.state) return null;
+  const state=JSON.parse(JSON.stringify(room.state));
+  if(member.host) return state;
+  const me=member.id, hideDecisions=['DECISION','REVIEW'].includes(state.phase), hideBids=state.phase==='IPO_BID';
+  for(const k of ['cardPool','cardDiscard','seed','rngN','rng','ledgerBaseline']) delete state[k];   // undealt cards + RNG state would let a guest infer/predict other hands
+  if(Array.isArray(state.currentIntel)) state.currentIntel=state.currentIntel.filter(x=>x&&x.player===me);
+  if(Array.isArray(state.history)) state.history.forEach(h=>{ if(h) delete h.seed; });
+  if(Array.isArray(state.players)) for(const p of state.players){
+    if(p.id===me) continue;
+    p.privateCards=[]; p.revealedCards=[];
+    if(hideDecisions&&Array.isArray(p.actions)) p.actions=[];                                       // simultaneous hidden orders
+    if(hideBids&&Array.isArray(p.ipoBids)) p.ipoBids=p.ipoBids.map(()=>0);                          // sealed IPO bids
+  }
+  if(hideBids&&Array.isArray(state.eventJournal)) state.eventJournal=state.eventJournal.filter(e=>!(e&&e.type==='IPO_BID'&&e.playerId!==me));
+  return state;
+}
 const server = http.createServer(async (req,res)=>{
   try {
     const url = new URL(req.url, `http://${req.headers.host||'localhost'}`);

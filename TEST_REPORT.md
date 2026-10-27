@@ -1,26 +1,25 @@
-# Test report (final files, `npm test`, Node 22 + Playwright Chromium, 23/23 PASS)
+# Test report – round 2 (final files, Node 22, Playwright Chromium)
 
-Run: `node --check server.js && node tests/check_syntax.js && node --test --test-concurrency=1 tests/*.test.js`
+Commands run (all executed on the exact files being committed):
 
-| # | Test | Result | Evidence |
-|---|------|--------|----------|
-| 1-3 | D1: bots are real bots; bots decide+lock and human LOCK → REVIEW; idle-human timeout reaches REVIEW | PASS | real Chromium, no console/page errors; fail on baseline |
-| 4 | Full game R1.SR1 → game over (≥20 sub-rounds, IPO ×2, events, bonus on), UI-driven, fake clock | PASS | one settlement per sub-round; prices within 0–10,000; no negative cash; supply = 10,000 each company; 4 final standings |
-| 5 | Action limits R1.SR1=5, R1.SR2/R2-9=3, R10/11=5 | PASS | `maxActions()` |
-| 6-7 | Server GET/HEAD routes, 404 JSON, bad JSON, invalid room, bad token, host-only commands, malformed commands | PASS | HTTP status asserts |
-| 8 | Two separate browser contexts: join, permissions, both trade, guest lock, host lock/reveal, identical state on both | PASS | JSON snapshot equality |
-| 9 | Online timer expiry locks idle guest → REVIEW | PASS | |
-| 10 | Guest refresh + host refresh mid-round, timer resumes, round completes | PASS | |
-| 11 | Duplicate / out-of-order commands: one trade set, one settlement | PASS | |
-| 12 | Invalid room join reported and recoverable | PASS | |
-| 13 | Server restart → client reports lost room | PASS | |
-| 14 | `/`, `/index.html`, `/?room=` load; every nav button works | PASS | no errors |
-| 15-17 | D4, D5, D2 regressions | PASS | fail on baseline |
-| 18 | ₹10,00,000 start; R1.SR1 2–5 distinct BUY, no SELL/SKIP, qty 200–500, duplicate company, action removal, 5-action cap | PASS | |
-| 19 | 2,500 cap and insufficient cash | PASS | |
-| 20 | SELL maturity (2 sub-rounds), 50% cap, <400 exception, min 200, action cap, proceeds credited | PASS | |
-| 21 | Repeated confirm/resolve cannot double-settle | PASS | |
-| 22 | Visible countdown, deterministic expiry → REVIEW → COMPLETE | PASS | |
-| 23 | `simulateOneGame` engine smoke (weak: only asserts no exception) | PASS | |
+| Command | Result |
+|---|---|
+| `node --check server.js` | PASS |
+| `node tests/check_syntax.js` (both inline scripts of `index.html`) | PASS |
+| `node --test --test-concurrency=1 tests/*.test.js` (= `npm test`) | **PASS – 53 / 53, 0 failed** (~100 s) |
 
-NOT RUN: VITO and card-private-information behaviour were not given dedicated tests (the full game exercises the VITO prompt path only if a bankruptcy occurs); circuit limits are only covered indirectly by the price-bound invariants; live-URL smoke test (no push access from this session).
+Every test drives the real `index.html` + `server.js`; multiplayer tests use two separate browser contexts (host "Alice", guest "Bob"). Each test also asserts no uncaught page errors / console errors / failed requests where a page is used.
+
+| Area (file) | Tests | Result | Evidence |
+|---|---|---|---|
+| Part 1 – state machine (`state_machine.test.js`) | 7 | PASS | label/button/counter checked in LOBBY, DECISION, REVIEW, settled-COMPLETE, next slot, R1.SR1→SR2→R2.SR1; double-click/duplicate calls → one deal, one settlement (history 1, trades 2), one advance; illegal START/NEXT/CONFIRM/LOCK/resolve are no-ops; START and NEXT never both enabled in any of 16 phase/settled combinations; R10→game over (no R12), optional R11 limit 5; online host+guest identical labels, guest disabled, host refresh keeps settled state; RNG resumes after refresh. **All 6 state tests FAIL on deployed `810dffc`.** |
+| Part 2 – privacy (`privacy.test.js`) | 5 | PASS | separate 5-card hands; Bob's captured network bodies + page state contain none of Alice's cardIds, no `cardPool`, no `seed`, Alice's orders hidden; forged `playerId`/query params/headers/no token/wrong token → nothing leaked, spoofed command body cannot act as Alice; refresh keeps own hand; before settlement History has no hidden cards; after settlement Alice's exact hand + outcomes are public; next deal has unique card instances and no carried outcomes. **3 of 5 FAIL on `810dffc`** (real leak: `currentIntel` carried every hand). |
+| Part 2/3 – cards & indices (`cards_indices.test.js`) | 11 | PASS | engine prices equal an independent hand-coded formula for all 8 companies for BANK NIFTY / NIFTY / SENSEX / USD/INR / VIX clues; company clue +15 Medium = +1.5%; additive stacking, cap ±60, circuit 5%; bounds ₹0–10,000; determinism; replay applies effects once; neutral fallback; dealIntel structure; help dialog numbers equal engine numbers. (Banking-mapping and FX tests fail on `810dffc` because those are the two behaviour changes below.) |
+| Part 4 – accounting (`accounting.test.js`) | 7 | PASS | after **every** settlement of 8 seeded full games (176 sub-rounds; events seen: BANKRUPTCY, BONUS_FREE, BONUS_PAID, BUYBACK, COMPANY_NEWS, DEFAULTER, DIVIDEND, MARKET_NEWS, RESULT, SPLIT, VITO_ROLLBACK; 6 VITO rollbacks; 16 IPO settlements; mid-game quit): supply = 10,000, portfolio = cash + frozen + market value, total shares, cash = ₹10,00,000 + journals, holdings = journals, lots = holdings, avg = replay of fills (events off), replayed settlement changes nothing. Negative control proves the checker detects injected corruption. Displayed Cash/Portfolio/Total shares/holdings/avg equal independent reconstruction in the UI. Dividend (mature only, frozen paid), split (mature doubles, cost basis constant, supply 10,000), VITO (price restored, once per player, no extra holdings). Built-in engine suites: 0 failures. |
+| Round 1 suites (`e2e_bots`, `fullgame`, `rules`, `online`, `regressions`) | 23 | PASS | unchanged behaviour of the stuck-round fix (`810dffc`) re-verified, incl. full 4-player game to game over, two-context online play, refresh, duplicate commands, server restart. |
+
+## NOT RUN / unverified
+* **Live deployment** – see delivery notes (pushed commit, Render status and live smoke tests are reported separately; not part of this table until executed).
+* The ₹3,15,000 / ₹10,33,500 / 4,800-share figures in your screenshot cannot be independently reconstructed (no trade log). The same arithmetic is verified for every state the engine can reach in the tests above, but those specific numbers are **not** confirmed.
+* Corporate-action cost basis was tested independently for **split** only; free/paid bonus avg-price handling is covered by the engine's built-in suite and the per-settlement ledger checks, not by a dedicated cost-basis assertion.
+* The host's browser holds all hands (architecture); no test can or does claim otherwise.
