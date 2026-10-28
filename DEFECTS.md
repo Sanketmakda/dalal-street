@@ -43,3 +43,30 @@ Baseline = `main` @ `fb71c84`. "Fails on baseline" = the regression test was run
 * The room host's browser holds every hand (host-authoritative architecture). Only a server-authoritative engine removes this; it is not attempted here.
 * Cash displayed in the Players table reveals a bidder's frozen IPO funds indirectly (cash falls while bids are sealed). Not changed.
 * HOW §1 still says "real multiplayer is not implemented" (outdated). Not changed.
+
+
+---
+# Round 3 (base commit `74811f7`) — verification, gap-closing and live-deployment status
+
+**Starting evidence.** Checkout clean, `main` = `origin/main` = `74811f7`. Only `index.html` is served (`server.js` streams it for `/` and `/index.html`); the stale `index .html` was deleted in Round 1. There is no `render.yaml`; the production URL cannot be derived from the repository.
+
+## Confirmed defects (reproduced, not hypothesised)
+
+| ID | Sev | Defect | Reproduction | Root cause | Status |
+|----|-----|--------|--------------|-----------|--------|
+| A | High | **Screenshot defect.** After R1.SR1 settles: header `Round 1 · Sub-Round 1/2`, badge `COMPLETE`, **`START R1 · SUB-ROUND 1` enabled and `NEXT ROUND` enabled**, counter `0 / 5`. Clicking START on the settled slot re-deals every bot and puts the game back in DECISION. | Real UI on the original `810dffc` build (script in the QA report): bot game, 2 BUYs, lock, reveal. Observed `startEnabled:true,nextEnabled:true`; forced START → `DECISION`, bots re-dealt (`[5,4]` actions). | `renderGame`/`startRound`/`nextRound` each derived availability from `S.phase` alone; nothing recorded that the slot had settled. | **Fixed in `85c3178`** (`controlState()`, `S.settled`). On current main: START disabled, label names the next slot, counter `0 / 3`, forced clicks are no-ops. Tests: `state_machine.test.js` ×7 (all fail on `810dffc`), `lifecycle.test.js` "Defect A". |
+| B | – | Cash ₹3,15,000 / Portfolio ₹10,33,500 / 4,800 shares. | Cannot be reconstructed: no trade log or save-game for that session was supplied. | n/a | **UNVERIFIED for those exact numbers** (not called correct). The same arithmetic is independently reconstructed after every settlement of 14 seeded games (see report) and in the displayed UI. No discrepancy found. |
+| C | – | Production deployment. | Sandbox network allowlist blocks `*.onrender.com` (curl 403, fetch tool "not on allowlist"); no Render API access. | n/a | **UNVERIFIED.** Screenshot (historical) showed `cfko` + `810dffc` Live. `74811f7` is on GitHub; whether Render built it is unknown. `tests/live_smoke.js` is ready to run against the URL. |
+| E | Low | `personalizedState` forwarded a non-array `currentIntel` to guests unfiltered. | API test: host publishes `currentIntel` as an object; guest poll contained the secret. | Filter guarded by `Array.isArray`. | **Fixed in `74811f7`** (fail closed). Test: `privacy.test.js` last test (fails on `85c3178`). |
+| F | Test-only | Intermittent suite failures (~1 in 3 full runs). | Looped full suite; captured: BUYBACK removed a holder's fresh shares; bankruptcy opened a VITO prompt that disabled NEXT. | Online flow tests used the UI default (events ON, random seed) but asserted exact balances. **Not an engine bug**: BUYBACK / BANKRUPTCY→VITO are agreed rules. | **Fixed in tests**: `H.createRoom` switches events OFF through the real host control (after room creation, which resets the checkbox); UI-driven bot tests decline the VITO prompt like a player. Event behaviour stays covered by the seeded games. |
+
+## Gaps in earlier coverage that this round closed (no new defects found)
+
+Seeded engine games at 2 / 6 / 10 players (events + both IPOs + VITO + bonus round), UI-driven bot games at 2 / 6 / 10 players, late join (409), 11th player (409), malformed room codes, guest quit mid-round, host disappearance, state-version/out-of-order polling, concurrent IPO bids with oversubscription, simultaneous VITO requests, rejected-order immutability, mobile 390×844 layout.
+
+## Recovery guarantees actually implemented (do not over-claim)
+
+* **Host-authoritative.** The host *browser* holds the complete game state, including every hand; the server is a room/message relay that filters what guests may see. Guests cannot read other hands, but the host's browser can.
+* Guest refresh: restored from the server's published state. Host refresh: restored from the last published state; timers/transitions resume; RNG sequence resumes; processed command `seq` persisted.
+* **Host leaves permanently: the game is paused for everyone.** There is no host transfer (verified: one host member, `hostOnline:false`). Smallest viable fix if wanted: persist the authoritative state server-side and let a guest take over — a rule/architecture decision, not done here.
+* Server restart / room expiry (4 h TTL): rooms are in memory and are lost; clients now say so and allow a new room.

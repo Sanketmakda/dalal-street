@@ -106,6 +106,18 @@ test('portfolio/cash/supply/lots/average reconcile after EVERY settlement, with 
   await ctx.close();
 });
 
+test('seeded full games at 2, 6 and 10 players (events + IPOs + VITO): every settlement reconciles; each run reaches Round 10', async () => {
+  const { ctx, page } = await H.openGame(browser, server.url);
+  const runs = [[2, 1201], [2, 1202], [6, 1203], [6, 1204], [10, 1205], [10, 1206]];
+  for (const [count, seed] of runs) {
+    const r = await runDriver(page, { seed, count, events: true, ipo: true });
+    assert.deepEqual(r.viol, [], `players=${count} seed=${seed}`);
+    assert.ok(r.rounds >= 10 && r.subRounds >= 20, `players=${count} seed=${seed} ran R1..R10 (rounds ${r.rounds}, sub-rounds ${r.subRounds})`);
+    console.log(`# seeded game players=${count} seed=${seed}: rounds=${r.rounds} subRounds=${r.subRounds} violations=0 events=${Object.keys(r.cov.events).length} vito=${r.cov.vito} ipoSettle=${r.cov.ipoSettle}`);
+  }
+  await ctx.close();
+});
+
 test('average price = replay of fills (no silent change from price moves); frozen/quit portfolios do not trade (no events/IPO)', async () => {
   const { ctx, page } = await H.openGame(browser, server.url);
   for (const seed of [11, 22, 33, 44]) { const r = await runDriver(page, { seed, count: 5, events: false, ipo: false }); assert.deepEqual(r.viol, [], `seed ${seed}`); assert.ok(r.cov.frozenSeen > 0, 'a frozen portfolio was audited'); }

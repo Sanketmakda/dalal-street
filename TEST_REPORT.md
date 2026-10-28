@@ -29,3 +29,47 @@ Every test drives the real `index.html` + `server.js`; multiplayer tests use two
 * Re-ran `npm test` on `85c3178`: 53/53 PASS. Added 1 test (server fails closed on a malformed `currentIntel`; fails on `85c3178`'s server, passes now) → **54/54 PASS**.
 * `server.js personalizedState`: a non-array `currentIntel` was forwarded unfiltered to guests. The engine always writes an array, so this was not reachable in normal play, but the filter now fails closed.
 * New `tests/live_smoke.js <url>` (HTTP-only post-deploy smoke: page, HEAD, health, create/join, permissions, guest payload privacy, 404). Executed against a local server: ALL PASSED. **Not executed against the Render URL** — this session's network allowlist blocks onrender.com.
+
+
+---
+# Round 3 report (base `74811f7`) — Node 22, Playwright Chromium, real `index.html` + `server.js`
+
+| Command | Result |
+|---|---|
+| `node --check server.js` | PASS |
+| `node tests/check_syntax.js` | PASS (syntax only — not evidence of gameplay) |
+| `npm test` (`node --test --test-concurrency=1 tests/*.test.js`) | **PASS 68 / 68**, repeated **5 consecutive full runs, 5 × 68/68** on the final code |
+| Same suite earlier in the round, before the test-determinism fix | 66/68, 68/68, 67/68, 68/68, 67/68 — failures were test-side (see DEFECTS F) |
+
+## Defect A reproduction (original `810dffc` vs current)
+Same script, real UI, 3-player bot game, 2 BUYs, lock, reveal:
+
+| | header | badge | START | NEXT | counter | forced START click |
+|---|---|---|---|---|---|---|
+| `810dffc` | Round 1 · Sub-Round 1/2 | COMPLETE | **enabled**, "START R1 · SUB-ROUND 1" | enabled | Actions 0 / 5 | DECISION, bots re-dealt (`[5,4]`) |
+| current | Round 1 · Sub-Round 1/2 · settled | COMPLETE | **disabled**, "START R1 · SUB-ROUND 2" | enabled | Actions (R1·SR2) 0 / 3 | no change |
+
+All 7 `state_machine.test.js` tests fail on the `810dffc` tree and pass on current.
+
+## New tests this round (`tests/lifecycle.test.js`, + 1 in `accounting.test.js`)
+| Scenario | Result | Evidence |
+|---|---|---|
+| Late join after start | PASS | API 409 "already started"; UI shows "Could not join", roster unchanged |
+| 11th player; malformed codes | PASS | 409 "full"; `abc!`, `%00`, 64-char code → JSON 404/400 |
+| Rejected orders (199, 501, duplicate company, SELL/SKIP in R1.SR1, bad index, 200.5, −200) | PASS | cash, holdings, pending orders, supply, history, trades byte-identical before/after; reason shown each time; earlier valid order kept |
+| UI-driven bot games, **2 / 6 / 10 players**, R1.SR1→SR2→R2.SR1 | PASS ×3 | every bot decided+locked via the real engine; one settlement each; `auditState` clean; supply 10,000; portfolio = cash+frozen+market |
+| Guest quits mid-round | PASS | host sees "Quit · Frozen"; later ADD_ACTION ignored; round settles; guest cash ₹10,00,000, 0 shares |
+| Host disappears | PASS | guest status "Host disconnected"; `hostOnline:false`; still one host (no transfer exists) |
+| State versions / out-of-order | PASS | up-to-date poll → `state:null`; guest cannot publish (403); stale state cannot overwrite |
+| Concurrent IPO bids (host + 2 guests, duplicate guest bid) + oversubscription | PASS | each bid reserved once; only 500 shares for sale → exactly 500 allocated, each ≤ bid, unallocated refunded, frozen=0; second `finalizeIPO` → false |
+| Simultaneous VITO from two eligible guests | PASS | exactly 1 `vitoUsed`, 1 `VITO_ROLLBACK`, price restored to previous close (₹88 in fixture), halt to next main round, holdings preserved |
+| Mobile 390×844 | PASS | no horizontal overflow on any page; start/lock/buy tappable; no console errors |
+| Defect A screenshot regression | PASS | table above |
+| Seeded full games (events+IPOs+VITO+bonus), each settlement reconciled | PASS | players/seed → rounds/sub-rounds/violations: 2/1201 → 11/22/0 · 2/1202 → 11/22/0 · 6/1203 → 11/22/0 · 6/1204 → 11/22/0 · 10/1205 → 11/22/0 · 10/1206 → 11/22/0 (plus the 8 earlier seeds, 3–6 players) |
+
+## BLOCKED / NOT RUN
+* **Live Render deployment — BLOCKED.** `*.onrender.com` is not reachable from this sandbox (curl: CONNECT 403; fetch tool: not on allowlist) and there is no Render API access. To unblock: run `npm run smoke:live https://<service>.onrender.com` and share the output, or share the Render deploy log / Events page.
+* Which of `cfko` / `cfk0` is the real service name — cannot be determined here; the screenshot you described says `cfko`.
+* The ₹3,15,000 / ₹10,33,500 / 4,800 figures — not reconstructable without that session's trade log.
+* Real-time (non-fake-clock) 2-minute IPO window and full 10-round multiplayer between two browsers: the IPO path ran with the engine's own timers/`finalizeIPO`; a full two-browser 10-round game was **not** run (full games were run engine-side and UI-driven through the bot flow).
+* No dedicated test of free/paid bonus average-price handling beyond the per-settlement reconciliation and engine self-tests.

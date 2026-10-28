@@ -1,6 +1,7 @@
 'use strict';
 // Shared helpers for the Dalal Street test suite. All tests drive the REAL index.html and server.js.
 const path = require('node:path');
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const http = require('node:http');
 const { spawn } = require('node:child_process');
@@ -78,10 +79,16 @@ async function waitPhase(page, wanted, timeout = 10000) {
   await page.waitForFunction(l => l.includes(S.phase), list, { timeout });
 }
 
-async function createRoom(page, name = 'Host') {
+// Random market events (buybacks, bankruptcies + VITO prompts, splits...) are real game rules and fire in ~half of all
+// settlements with a random seed. Online flow tests assert exact balances, so they switch events OFF through the real
+// host control; event behaviour is covered by the seeded accounting/fullgame suites.
+async function createRoom(page, name = 'Host', { events = false } = {}) {
   await page.fill('#onlineName', name);
   await page.click('#onlineCreate');
   await page.waitForFunction(() => document.getElementById('onlineRoomCode').textContent.length === 6, null, { timeout: 8000 });
+  // Must happen AFTER the room exists: creating it rebuilds S from defaults and the lobby re-renders the checkbox.
+  await page.evaluate(on => { const e = document.getElementById('eventsOn'); e.checked = on; e.dispatchEvent(new Event('change')); }, events);
+  assert(await page.evaluate(on => S.eventsOn === on, events), 'events setting must reach the game state');
   return (await page.textContent('#onlineRoomCode')).trim();
 }
 async function joinRoom(page, code, name = 'Guest') {
